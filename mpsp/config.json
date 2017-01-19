@@ -1,7 +1,15 @@
 {
   "loop_period": 10,
   "devices": [
-    {"klass": "DHT22",
-      "data_pin": "Y2"}
+    {
+      "klass": "DHT22",
+      "data_pin": "Y2",
+      "enabled": "true",
+    },
+    {
+      "klass": "DS18X20",
+      "data_pin": "Y3",
+      "enabled": "true"
+    }
   ]
 }

@@ -18,6 +18,8 @@ import json
 import pyb
 import os
 
+from display import DISPLAY
+
 
 def status_event(period):
     led = pyb.LED(2)
@@ -34,8 +36,16 @@ def status_event(period):
 DATA_ROOT = '/sd/mpsp_data'
 
 
-def dht_event(dev):
-    root = '{}/dht'.format(DATA_ROOT)
+def ds18x20_event(dev, eid):
+    return csv_datalogger_wrapper(dev, 'ds18x20', 'ds18', 'Time,TempC', eid, verbose=True)
+
+
+def dht_event(dev, eid):
+    return csv_datalogger_wrapper(dev, 'dht', 'dht', 'Time,Humidity%,TempC', eid, verbose=True)
+
+
+def csv_datalogger_wrapper(dev, rootname, name, header, msg_idx, verbose=False):
+    root = '{}/{}'.format(DATA_ROOT, rootname)
     try:
         os.mkdir(root)
     except OSError:
@@ -50,12 +60,17 @@ def dht_event(dev):
         cnt = max(cnt, int(h) + 1)
 
     p = '{}/{:06n}.csv'.format(root, cnt)
+    with open(p, 'w') as wfile:
+        wfile.write(header)
 
     def tfunc():
         m = dev.get_measurement()
-        print(m)
-        with open(p, 'a') as afile:
-            afile.write('{},{},{}\n'.format(pyb.millis(), m[0], m[1]))
+        if verbose:
+            # print('{}={}'.format(dev, m))
+            DISPLAY.message('{}:{}'.format(name, m), msg_idx)
+        if m is not None:
+            with open(p, 'a') as afile:
+                afile.write('{},{}\n'.format(pyb.millis(), m))
 
     return event_wrapper(tfunc, None, 1000)
 
@@ -84,24 +99,36 @@ class MPSP:
     _period = 1
 
     def init(self):
+
         try:
             os.mkdir('/sd/mpsp_data')
         except OSError:
             pass
 
-        devs = {}
+        # devs = {}
+        evts = [status_event(500)]
+        names = []
         with open('mpsp/config.json', 'r') as rfile:
             obj = json.loads(rfile.read())
             self._period = obj['loop_period']
-
+            eid = 2
             for di in obj.get('devices'):
-                dev = self._create_device(di)
-                if dev is not None:
-                    devs[dev.name] = dev
+                if di.get('enabled'):
 
-        self._devices = devs
+                    evt = self._create_device_event(di, eid)
+                    if evt is not None:
+                        eid += 1
+                        evts.append(evt)
+                        names.append(di)
 
-        self._events = [status_event(500), dht_event(devs['DHT22'])]
+        DISPLAY.header('MPSP v0.1', '  ')
+        self._events = evts
+        # self._devices = devs
+        #
+        #
+        # evts = [status_event(500)]
+        # if 'DHT22' in
+        # self._events = [status_event(500), dht_event(devs['DHT22'])]
 
     def run(self):
         cnt = 0
@@ -114,19 +141,24 @@ class MPSP:
             cnt += 1
 
     # private
-    def _create_device(self, dev):
+    def _create_device_event(self, dev, eid):
         klass = dev['klass']
-        name = dev.get('name', klass)
-
+        # name = dev.get('name', klass)
+        factory = None
         if klass == 'DHT22':
             def factory():
                 from mpsp.drivers.dht import DHT22
-                d = DHT22(data_pin=dev.get('data_pin','Y2'))
-                return d
+                d = DHT22(data_pin=dev.get('data_pin', 'Y2'))
+                return dht_event(d, eid)
 
-        dd = factory()
-        dd.name = name
-        return dd
+        elif klass == 'DS18X20':
+            def factory():
+                from mpsp.drivers.ds18x20 import DS18X20
+                d = DS18X20(dev.get('data_pin', 'Y3'))
+                return ds18x20_event(d, eid)
 
+        if factory:
+            dd = factory()
+            return dd
 
 # ============= EOF =============================================

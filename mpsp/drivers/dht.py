@@ -1,3 +1,5 @@
+# adapted from https://github.com/polygontwist/uPython-DHT22/blob/master/DHT22.py
+
 import pyb
 from pyb import Pin
 from pyb import ExtInt
@@ -114,4 +116,12 @@ class DHT22:
         init(**kw)
 
     def get_measurement(self):
-        return measure()
+        """
+        return a csv string
+        :return:
+        """
+        try:
+            hum, temp = measure()
+            return '{:0.1f},{:0.1f}'.format(hum, temp)
+        except ValueError:
+            pass

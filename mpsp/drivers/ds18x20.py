@@ -37,14 +37,22 @@ pass a ROM to read_temp:
 
 """
 
-from onewire import OneWire
+from .onewire import OneWire
+from pyb import Pin
 
-class DS18X20(object):
+
+class DS18X20:
     def __init__(self, pin):
+        if isinstance(pin, str):
+            pin = Pin(pin)
+
         self.ow = OneWire(pin)
         # Scan the 1-wire devices, but only keep those which have the
         # correct # first byte in their rom for a DS18x20 device.
         self.roms = [rom for rom in self.ow.scan() if rom[0] == 0x10 or rom[0] == 0x28]
+
+    def get_measurement(self):
+        return self.read_temp()
 
     def read_temp(self, rom=None):
         """
