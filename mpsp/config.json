@@ -1,0 +1,7 @@
+{
+  "loop_period": 10,
+  "devices": [
+    {"klass": "DHT22",
+      "data_pin": "Y2"}
+  ]
+}
