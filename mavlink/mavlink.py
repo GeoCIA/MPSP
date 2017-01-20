@@ -1,46 +1,45 @@
-# ===============================================================================
-# Copyright 2017 ross
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ===============================================================================
 import struct
-
 from pyb import UART, millis, delay
 
 
 class Message:
     def __init__(self, s):
         self._buffer = s
-        self.msg_len = 0
+        self.payload_len = 0
+        self.payload = None
 
     def update(self, s):
         self._buffer += s
 
     def to_text(self):
         self._parse()
-        if self.msg_len and len(self._buffer)-8 >= self.msg_len:
+        if self.payload_len and len(self._buffer) - 8 >= self.payload_len:
             return self._buffer
 
     def _parse(self):
         b = self._buffer
         try:
-            self.msg_len = b[1]
+            self.payload_len = b[1]
             self.seq_num = b[2]
             self.sys_id = b[3]
+
             self.comp_id = b[4]
             self.message_id = b[5]
         except IndexError:
             pass
+
+        if len(b) - 8 >= self.payload_len:
+            mid = self.message_id
+            print('message {}'.format(self.message_id))
+            buf = self._buffer[6:-2]
+            if mid == 0:
+
+                self.payload = dict(zip(('custom_mode',
+                                         'type','autopilot','base_mode','system_status', 'mavlink_version'),
+                                        struct.unpack('IBBBBB', buf)))
+            elif mid == 253:
+                severity = struct.unpack('B', buf)[0]
+                self.payload = (severity, buf[1:])
 
     def __str__(self):
         return str(self._buffer)
@@ -50,7 +49,7 @@ class Message:
 
 
 class MAVLinkSerial:
-    def __init__(self, dev=3, baudrate=115200):
+    def __init__(self, dev=3, baudrate=57600):
         self._uart = UART(dev, baudrate)
 
     def write(self, msg):
@@ -68,9 +67,10 @@ class MAVLink:
         self._link = MAVLinkSerial()
         self.message = None
 
-    def wait_for_heartbeat(self):
+    def get_heartbeat(self):
         msg = self.recv_match(type='HEARTBEAT', blocking=True)
-        print("Heartbeat from APM {} {}({})".format(msg, msg.msg_len, len(msg._buffer)))
+        # print("Heartbeat from APM {} {}({})".format(msg, msg.payload_len, len(msg._buffer)))
+        return msg
 
     def recv_match(self, type='HEARTBEAT', blocking=True, timeout=None):
 
@@ -132,14 +132,15 @@ class MAVLink:
         pass
 
     def post_message(self, msg):
-        print('msg. {}'.format(msg.msg_len))
+        # print('msg. {}'.format(msg.payload_len))
+        pass
 
     def _bytes_needed(self):
         return
 
     def _parse_char(self, s):
         if self.message is None:
-            if s and s[0]==0xFE:
+            if s and s[0] == 0xFE:
                 self.message = Message(s)
         else:
             self.message.update(s)
@@ -147,7 +148,7 @@ class MAVLink:
         if self.message:
             if self.message.to_text():
                 return self.message
-        # if self._message_buffer.endswith('\r'):
-        #     return self._message_buffer
+                # if self._message_buffer.endswith('\r'):
+                #     return self._message_buffer
 
 # ============= EOF =============================================

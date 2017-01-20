@@ -9,7 +9,7 @@ pyb.LED(4).on()                 # indicate that we are selecting the mode
 
 if switch_value:
     pyb.usb_mode('CDC+MSC')
-    pyb.main('main.py')
+    # pyb.main('main.py')
 else:
     pyb.usb_mode('CDC+HID')
     pyb.main('mpsp_main.py')

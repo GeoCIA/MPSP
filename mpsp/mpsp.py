@@ -19,6 +19,8 @@ import pyb
 import os
 
 from display import DISPLAY
+from mavlink.mavlink import MAVLink
+from mpsp import FLIGHT
 
 
 def status_event(period):
@@ -98,15 +100,21 @@ class MPSP:
     _events = None
     _period = 1
 
+    def __init__(self, mode):
+        self._mode = mode
+
     def init(self):
+
+        if self._mode == FLIGHT:
+            self._mavlink = MAVLink()
 
         try:
             os.mkdir('/sd/mpsp_data')
         except OSError:
             pass
 
-        # devs = {}
         evts = [status_event(500)]
+
         names = []
         with open('mpsp/config.json', 'r') as rfile:
             obj = json.loads(rfile.read())
@@ -123,17 +131,18 @@ class MPSP:
 
         DISPLAY.header('MPSP v0.1', '  ')
         self._events = evts
-        # self._devices = devs
-        #
-        #
-        # evts = [status_event(500)]
-        # if 'DHT22' in
-        # self._events = [status_event(500), dht_event(devs['DHT22'])]
 
     def run(self):
         cnt = 0
         period = self._period
+        mode = self._mode
+        hbfunc = self._mavlink.get_heartbeat
+
         while 1:
+            if mode == FLIGHT:
+                hb = hbfunc()
+                print('hb={}'.format(hb.payload))
+
             for evt in self._events:
                 evt()
 
