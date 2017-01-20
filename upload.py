@@ -17,8 +17,24 @@
 # ============= enthought library imports =======================
 # ============= standard library imports ========================
 # ============= local library imports  ==========================
-HEARTBEAT = 0
-GLOBAL_POSITION_INT = 33
-STATUSTEXT = 253
+import os
+import shutil
 
+droot = '/Volumes/NO NAME/'
+sroot = os.path.abspath(os.path.dirname(__file__))
+
+for pkg in ('mavlink', 'mpsp'):
+    dest = os.path.join(droot, pkg)
+    src = os.path.join(sroot, pkg)
+
+    if os.path.isdir(dest):
+        print('deleting {}'.format(dest))
+        shutil.rmtree(dest)
+
+    print('copy {} to {}'.format(src, dest))
+
+    shutil.copytree(src, dest)
+#
+for src in ('boot.py','main.py','mpsp_main.py','oled.py','README.md'):
+    shutil.copy(src, dest)
 # ============= EOF =============================================

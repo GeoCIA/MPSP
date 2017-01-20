@@ -1,6 +1,8 @@
 import struct
 from pyb import UART, millis, delay
 
+from mavlink import HEARTBEAT, GLOBAL_POSITION_INT, STATUSTEXT
+
 
 class Message:
     def __init__(self, s):
@@ -30,14 +32,22 @@ class Message:
 
         if len(b) - 8 >= self.payload_len:
             mid = self.message_id
-            print('message {}'.format(self.message_id))
+            # print('message {}'.format(self.message_id))
             buf = self._buffer[6:-2]
-            if mid == 0:
+            if mid == HEARTBEAT:
 
                 self.payload = dict(zip(('custom_mode',
-                                         'type','autopilot','base_mode','system_status', 'mavlink_version'),
+                                         'type', 'autopilot', 'base_mode', 'system_status', 'mavlink_version'),
                                         struct.unpack('IBBBBB', buf)))
-            elif mid == 253:
+            elif mid == GLOBAL_POSITION_INT:
+                #
+                self.payload = dict(zip(('time_boot_ms',
+                                         'lat',
+                                         'lon',
+                                         'alt',
+                                         'relative_alt'),
+                                        struct.unpack('Iiiii', buf)))
+            elif mid == STATUSTEXT:
                 severity = struct.unpack('B', buf)[0]
                 self.payload = (severity, buf[1:])
 
@@ -67,12 +77,12 @@ class MAVLink:
         self._link = MAVLinkSerial()
         self.message = None
 
-    def get_heartbeat(self):
-        msg = self.recv_match(type='HEARTBEAT', blocking=True)
-        # print("Heartbeat from APM {} {}({})".format(msg, msg.payload_len, len(msg._buffer)))
-        return msg
+    def wait_heartbeat(self):
+        return self.recv_match(message_type=HEARTBEAT, blocking=True)
 
-    def recv_match(self, type='HEARTBEAT', blocking=True, timeout=None):
+    def recv_match(self, message_type=HEARTBEAT, blocking=True, timeout=None):
+        if message_type is not None and not isinstance(message_type, list):
+            message_type = [message_type]
 
         st = millis()
         while 1:
@@ -84,6 +94,7 @@ class MAVLink:
                     return
 
             m = self.recv_msg()
+
             if m is None:
                 if blocking:
                     if timeout is None:
@@ -91,6 +102,9 @@ class MAVLink:
                     else:
                         self.select(timeout / 2)
                     continue
+
+            if message_type is not None and m.message_id not in message_type:
+                continue
 
             return m
 

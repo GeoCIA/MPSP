@@ -1,15 +1,16 @@
 {
-  "loop_period": 10,
+  "loop_period": 50,
+  "oled_enabled": "false",
   "devices": [
     {
       "klass": "DHT22",
       "data_pin": "Y2",
-      "enabled": "true",
+      "enabled": "false",
     },
     {
       "klass": "DS18X20",
       "data_pin": "Y3",
-      "enabled": "true"
+      "enabled": "false"
     }
   ]
 }

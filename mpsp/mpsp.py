@@ -18,7 +18,7 @@ import json
 import pyb
 import os
 
-from display import DISPLAY
+from mavlink import GLOBAL_POSITION_INT, HEARTBEAT
 from mavlink.mavlink import MAVLink
 from mpsp import FLIGHT
 
@@ -32,18 +32,23 @@ def status_event(period):
     def ffunc():
         return led.off()
 
-    return event_wrapper(tfunc, ffunc, period, 50)
+    return event_wrapper(tfunc, ffunc, period, 5)
 
 
 DATA_ROOT = '/sd/mpsp_data'
 
+# RESERVED TIMERS 2,3,5,6
+STATUS_TIMER = 1
+HEARTBEAT_TIMER = 7
+GPS_TIMER = 8
 
-def ds18x20_event(dev, eid):
-    return csv_datalogger_wrapper(dev, 'ds18x20', 'ds18', 'Time,TempC', eid, verbose=True)
+
+def ds18x20_event(dev, eid, display):
+    return csv_datalogger_wrapper(dev, 'ds18x20', 'ds18', 'Time,TempC', eid, verbose=display)
 
 
-def dht_event(dev, eid):
-    return csv_datalogger_wrapper(dev, 'dht', 'dht', 'Time,Humidity%,TempC', eid, verbose=True)
+def dht_event(dev, eid, display):
+    return csv_datalogger_wrapper(dev, 'dht', 'dht', 'Time,Humidity%,TempC', eid, verbose=display)
 
 
 def csv_datalogger_wrapper(dev, rootname, name, header, msg_idx, verbose=False):
@@ -68,6 +73,7 @@ def csv_datalogger_wrapper(dev, rootname, name, header, msg_idx, verbose=False):
     def tfunc():
         m = dev.get_measurement()
         if verbose:
+            from display import DISPLAY
             # print('{}={}'.format(dev, m))
             DISPLAY.message('{}:{}'.format(name, m), msg_idx)
         if m is not None:
@@ -99,6 +105,8 @@ class MPSP:
     _devices = None
     _events = None
     _period = 1
+    _last_hb = 0
+    _oled_enabled = True
 
     def __init__(self, mode):
         self._mode = mode
@@ -119,6 +127,8 @@ class MPSP:
         with open('mpsp/config.json', 'r') as rfile:
             obj = json.loads(rfile.read())
             self._period = obj['loop_period']
+            self._oled_enabled = obj['oled_enabled']
+
             eid = 2
             for di in obj.get('devices'):
                 if di.get('enabled'):
@@ -129,27 +139,44 @@ class MPSP:
                         evts.append(evt)
                         names.append(di)
 
-        DISPLAY.header('MPSP v0.1', '  ')
+        if self._oled_enabled:
+            from display import DISPLAY
+            DISPLAY.header('MPSP v0.1', '  ')
+
         self._events = evts
 
     def run(self):
         cnt = 0
         period = self._period
-        mode = self._mode
-        hbfunc = self._mavlink.get_heartbeat
+
+        if self._mode == FLIGHT:
+            self._mavlink.wait_heartbeat()
+            self._setup_rtc()
 
         while 1:
-            if mode == FLIGHT:
-                hb = hbfunc()
-                print('hb={}'.format(hb.payload))
 
-            for evt in self._events:
-                evt()
+            # if self._mode == FLIGHT:
+            #     self._mav_event()
+
+            for i, evt in enumerate(self._events):
+                try:
+                    evt()
+                except BaseException as e:
+                    print('event {} {}'.format(i, e))
 
             pyb.delay(period)
             cnt += 1
 
     # private
+    def _mav_event(self):
+        msg = self._mavlink.recv_match(message_type=None, blocking=False)
+        if msg:
+            print('got message: {} {}'.format(msg.message_id, msg.payload))
+
+    def _setup_rtc(self):
+        msg = self._mavlink.recv_match(GLOBAL_POSITION_INT)
+        print(msg.payload)
+
     def _create_device_event(self, dev, eid):
         klass = dev['klass']
         # name = dev.get('name', klass)
@@ -158,13 +185,13 @@ class MPSP:
             def factory():
                 from mpsp.drivers.dht import DHT22
                 d = DHT22(data_pin=dev.get('data_pin', 'Y2'))
-                return dht_event(d, eid)
+                return dht_event(d, eid, self._oled_enabled)
 
         elif klass == 'DS18X20':
             def factory():
                 from mpsp.drivers.ds18x20 import DS18X20
                 d = DS18X20(dev.get('data_pin', 'Y3'))
-                return ds18x20_event(d, eid)
+                return ds18x20_event(d, eid, self._oled_enabled)
 
         if factory:
             dd = factory()
