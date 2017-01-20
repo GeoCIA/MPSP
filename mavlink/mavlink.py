@@ -12,11 +12,24 @@ class Message:
 
     def update(self, s):
         self._buffer += s
-
-    def to_text(self):
         self._parse()
-        if self.payload_len and len(self._buffer) - 8 >= self.payload_len:
-            return self._buffer
+
+    def clean(self):
+        self._buffer = b''
+        self.payload = None
+        self.payload_len = 0
+        self.seq_num = None
+        self.sys_id = None
+        self.comp_id = None
+        self.message_id = None
+
+    # def to_text(self):
+    #     self._parse()
+    #     if self.payload_len and len(self._buffer) - 8 >= self.payload_len:
+    #         return self._buffer
+
+    def is_complete(self):
+        return self.payload_len and len(self._buffer) - 8 >= self.payload_len
 
     def _parse(self):
         b = self._buffer
@@ -35,18 +48,9 @@ class Message:
             # print('message {}'.format(self.message_id))
             buf = self._buffer[6:-2]
             if mid == HEARTBEAT:
-
-                self.payload = dict(zip(('custom_mode',
-                                         'type', 'autopilot', 'base_mode', 'system_status', 'mavlink_version'),
-                                        struct.unpack('IBBBBB', buf)))
+                self.payload = struct.unpack('IBBBBB', buf)
             elif mid == GLOBAL_POSITION_INT:
-                #
-                self.payload = dict(zip(('time_boot_ms',
-                                         'lat',
-                                         'lon',
-                                         'alt',
-                                         'relative_alt'),
-                                        struct.unpack('Iiiii', buf)))
+                self.payload = struct.unpack('Iiiii', buf)
             elif mid == STATUSTEXT:
                 severity = struct.unpack('B', buf)[0]
                 self.payload = (severity, buf[1:])
@@ -75,7 +79,7 @@ class MAVLinkSerial:
 class MAVLink:
     def __init__(self):
         self._link = MAVLinkSerial()
-        self.message = None
+        self.message = Message(b'')
 
     def wait_heartbeat(self):
         return self.recv_match(message_type=HEARTBEAT, blocking=True)
@@ -137,7 +141,7 @@ class MAVLink:
                 #     usec = int(time.time() * 1.0e6) & ~3
                 #     self.logfile.write(str(struct.pack('>Q', usec) + msg.get_msgbuf()))
                 self.post_message(msg)
-                self.message = None
+                self.message.clean()
                 return msg
                 # if we failed to parse any messages _and_ no new bytes arrived, return immediately so the client has the option to
                 # timeout
@@ -153,15 +157,9 @@ class MAVLink:
         return
 
     def _parse_char(self, s):
-        if self.message is None:
-            if s and s[0] == 0xFE:
-                self.message = Message(s)
-        else:
-            self.message.update(s)
-
-        if self.message:
-            if self.message.to_text():
-                return self.message
+        self.message.update(s)
+        if self.message.is_complete():
+            return self.message
                 # if self._message_buffer.endswith('\r'):
                 #     return self._message_buffer
 
