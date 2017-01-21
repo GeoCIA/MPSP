@@ -1,5 +1,5 @@
 {
-  "loop_period": 50,
+  "loop_period": 250,
   "oled_enabled": "false",
   "devices": [
     {

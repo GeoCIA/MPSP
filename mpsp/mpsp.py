@@ -22,19 +22,6 @@ from mavlink import GLOBAL_POSITION_INT, HEARTBEAT
 from mavlink.mavlink import MAVLink
 from mpsp import FLIGHT
 
-
-def status_event(period):
-    led = pyb.LED(2)
-
-    def tfunc():
-        return led.on()
-
-    def ffunc():
-        return led.off()
-
-    return event_wrapper(tfunc, ffunc, period, 5)
-
-
 DATA_ROOT = '/sd/mpsp_data'
 
 # RESERVED TIMERS 2,3,5,6
@@ -121,8 +108,8 @@ class MPSP:
         except OSError:
             pass
 
-        evts = [status_event(500)]
 
+        evts = []
         names = []
         with open('mpsp/config.json', 'r') as rfile:
             obj = json.loads(rfile.read())
@@ -146,36 +133,74 @@ class MPSP:
         self._events = evts
 
     def run(self):
-        cnt = 0
+
         period = self._period
+        tim = pyb.Timer(STATUS_TIMER, freq=1)
 
         if self._mode == FLIGHT:
-            self._mavlink.wait_heartbeat()
-            self._setup_rtc()
+            if not self._mavlink.wait_heartbeat():
+                 self._mavlink_warning()
+                 self._cancel(tim)
+                 return
 
+            if not self._setup_rtc():
+                self._cancel(tim)
+                return
+
+        tim.callback(lambda t: pyb.LED(2).toggle())
+
+        switch = pyb.Switch()
         while 1:
+            try:
+                if self._mode == FLIGHT:    
+                    print('get_message={}'.format(self._mavlink.get_message()))
 
-            # if self._mode == FLIGHT:
-            #     self._mav_event()
+                for i, evt in enumerate(self._events):
+                    try:
+                        evt()
+                    except BaseException as e:
+                        pass
 
-            for i, evt in enumerate(self._events):
-                try:
-                    evt()
-                except BaseException as e:
-                    print('event {} {}'.format(i, e))
+            except BaseException as e:
+                print(e)
 
-            pyb.delay(period)
-            cnt += 1
+            if switch():
+                self._cancel(tim)
+                break
+
 
     # private
-    def _mav_event(self):
-        msg = self._mavlink.recv_match(message_type=None, blocking=False)
-        if msg:
-            print('got message: {} {}'.format(msg.message_id, msg.payload))
+    # def _mav_event(self):
+    #     msg = self._mavlink.recv_match(message_type=None, blocking=False)
+    #     if msg:
+    #         print('got message: {} {}'.format(msg.message_id, msg.payload))
+    #         self._mavlink.clear()
+    def _mavlink_warning(self):
+        led1 = pyb.LED(1)
+        led2 = pyb.LED(2)
+        led3 = pyb.LED(3)
+        led4 = pyb.LED(4)
+
+        led1.on()
+        led2.on()
+        led3.on()
+        led4.on()
+
+        for i in range(10):
+            led1.toggle()
+            led2.toggle()
+            led3.toggle()
+            led4.toggle()
+            pyb.delay(250)
+
+    def _cancel(self, tim):
+        tim.callback(None)
+        pyb.LED(2).off()
 
     def _setup_rtc(self):
-        msg = self._mavlink.recv_match(GLOBAL_POSITION_INT)
-        print(msg.payload)
+        ts = self._mavlink.wait_timestamp()
+        if not ts:
+            self._mavlink_warning()
 
     def _create_device_event(self, dev, eid):
         klass = dev['klass']
