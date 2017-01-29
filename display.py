@@ -52,8 +52,10 @@ class OLED:
         lines = self._doc.add_message(msg, idx)
 
         self._scr.fill(0)
+        h = 0
         for i, l in enumerate(lines):
-            self._scr.text(str(l.msg), 0, i * 10)
+            self._scr.text(str(l.msg), 0, h)
+            h += 7 if i == 1 else 9
         self._scr.show()
 
     def header(self, msg1, msg2):

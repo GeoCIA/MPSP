@@ -52,7 +52,7 @@ class DS18X20:
         self.roms = [rom for rom in self.ow.scan() if rom[0] == 0x10 or rom[0] == 0x28]
 
     def get_measurement(self):
-        return self.read_temp()
+        return self.read_temps()
 
     def read_temp(self, rom=None):
         """

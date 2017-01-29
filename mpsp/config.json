@@ -1,16 +1,23 @@
 {
   "loop_period": 250,
-  "oled_enabled": "false",
+  "oled_enabled": true,
   "devices": [
     {
       "klass": "DHT22",
-      "data_pin": "Y2",
-      "enabled": "false",
+      "data_pin": "Y4",
+      "enabled": false,
+      "period": 10000
     },
     {
       "klass": "DS18X20",
       "data_pin": "Y3",
-      "enabled": "false"
+      "enabled": true,
+      "period": 2000
+    },
+    {
+      "klass": "ADS1115",
+      "bus": 1,
+      "enabled": true
     }
   ]
 }

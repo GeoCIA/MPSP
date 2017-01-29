@@ -17,8 +17,17 @@
 # ============= enthought library imports =======================
 # ============= standard library imports ========================
 # ============= local library imports  ==========================
+
+
+# Common Messages
 HEARTBEAT = 0
 GLOBAL_POSITION_INT = 33
 STATUSTEXT = 253
+ATTITUDE = 30
+AHRS2 = 178
+AHRS3 = 182
 
+# ArdupilotMega Messages
+# = 178
+# = 182
 # ============= EOF =============================================

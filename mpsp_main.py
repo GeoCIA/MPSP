@@ -14,8 +14,15 @@ import pyb
 # pyb.LED(4).on()                 # indicate that we are selecting the mode
 
 mode = FLIGHT
-
-m = MPSP(mode=mode)
+#mode = GROUNDTEST
+m = MPSP(mode)
 m.init()
 m.run()
 
+# from mpsp.drivers.ads1x15 import ADS1115
+# i2c=pyb.I2C(1, pyb.I2C.MASTER)
+# adc = ADS1115(i2c)
+#
+# for i in range(2000):
+#     print('{:0.3f} {:0.3f} {:0.3f}'.format(adc.read(0),adc.read_voltage(0), adc.read_voltage(1)))
+#     pyb.delay(1)
