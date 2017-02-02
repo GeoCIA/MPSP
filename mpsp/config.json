@@ -1,6 +1,7 @@
 {
   "loop_period": 250,
   "oled_enabled": true,
+  "dome_led_pin": "X2",
   "devices": [
     {
       "klass": "DHT22",
@@ -12,12 +13,12 @@
       "klass": "DS18X20",
       "data_pin": "Y3",
       "enabled": true,
-      "period": 2000
+      "period": 500
     },
     {
       "klass": "ADS1115",
       "bus": 1,
-      "enabled": true
+      "enabled": false
     }
   ]
 }

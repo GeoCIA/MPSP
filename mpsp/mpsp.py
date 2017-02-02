@@ -22,25 +22,29 @@ import io
 from mavlink import GLOBAL_POSITION_INT, HEARTBEAT, ATTITUDE
 from mavlink.mavlink import MAVLink
 from mpsp import FLIGHT
+from mpsp.drivers.tail_leds import generate_tail_flight_pattern, generate_tail_ground_pattern
 
 DATA_ROOT = '/sd/mpsp_data'
 
 # RESERVED TIMERS 2,3,5,6
-STATUS_TIMER = 1
-HEARTBEAT_TIMER = 7
-DOME_LED_TIMER = 8
-DOME_LED_PIN = 'X2'
-STATUS_LED = 2
+STATUS_TIMER = const( 1)
+HEARTBEAT_TIMER = const( 7)
+LED_TIMER = const(8)
+STATUS_LED = const( 2)
 
-WARNING_LED = 1
-TFUNC_LED = 3
+WARNING_LED = const( 1)
+TFUNC_LED = const( 3)
 
 OPEN_FILES = []
 
-DOME_GROUND_PATTERN = (0, 1, 0, 1, 0, 1)
+DOME_GROUND_PATTERN = (1, 0, 1, 0, 0, 0)
 DOME_FLIGHT_PATTERN = (0,0,0,0,0,1,1)
 DOME_CNT = 0
 
+TAIL_CNT = 0
+TAIL_FLIGHT_PATTERN = generate_tail_flight_pattern()
+TAIL_GROUND_PATTERN = generate_tail_ground_pattern()
+CURRENT_HASH = None
 
 def ads1115_event(dev, eid, period, display):
     return csv_datalogger_wrapper(dev, 'ads115', 'A', 'A0,A1,A2,A3', eid,period,  verbose=display)
@@ -75,17 +79,21 @@ def csv_datalogger_wrapper(dev, rootname, name, header, msg_idx, period, verbose
     wfile.write(header)
 
     OPEN_FILES.append(wfile)
+    st = pyb.millis()
     def tfunc(ctx):
         m = dev.get_measurement()
-
+        print((pyb.millis()-st)/1000, dev, m)
         if verbose:
-            from display import DISPLAY
-            #print('{}={}'.format(dev, m))
-            if isinstance(m, (list, tuple)):
-                for i,mi in enumerate(m):
-                    DISPLAY.message('{}{}:{}'.format(name,i, mi), msg_idx+i)
-            else:
-                DISPLAY.message('{}:{}'.format(name, m), msg_idx)
+            try:
+                from display import DISPLAY
+                #print('{}={}'.format(dev, m))
+                if isinstance(m, (list, tuple)):
+                    for i,mi in enumerate(m):
+                        DISPLAY.message('{}{}:{}'.format(name,i, mi), msg_idx+i)
+                else:
+                    DISPLAY.message('{}:{}'.format(name, m), msg_idx)
+            except OSError:
+                pass
 
         if m is not None:
             try:
@@ -95,18 +103,23 @@ def csv_datalogger_wrapper(dev, rootname, name, header, msg_idx, period, verbose
                 if isinstance(m, (list, tuple)):
                     m = ','.join(map(str, m))
                 wfile.write('{},{}\n'.format(gps, m))
+                if not ctx['iteration']%5:
+                    print('flushing file')
+                    wfile.flush()
             except KeyboardInterrupt:
                 # never allow Ctrl+C when writing to disk
                 pass
-
     return event_wrapper(tfunc, None, period)
 
 
-def event_wrapper(tfunc, ffunc, period, count_threshold=0):
-    ctx = {'last_call': pyb.millis(), 'cnt': 0}
+def event_wrapper(tfunc, ffunc, period, count_threshold=0, iteration_threshold=100):
+    ctx = {'last_call': pyb.millis(), 'cnt': 0, 'iteration': 0, 'flopbit':0, 'pflopbit': 0}
     def func(mctx):
         if pyb.millis() - ctx['last_call'] > period:
+            ctx['pflopbit'] = ctx['flopbit']
+            ctx['flopbit'] = 1
             if tfunc is not None:
+                mctx['iteration']= ctx['iteration']
                 try:
                     tfunc(mctx)
                 except KeyboardInterrupt as e:
@@ -115,13 +128,19 @@ def event_wrapper(tfunc, ffunc, period, count_threshold=0):
                     pyb.LED(TFUNC_LED).on()
                     print('tfunc exception={}'.format(e))
             ctx['cnt'] += 1
+            ctx['iteration'] +=1
+            if ctx['iteration'] >= iteration_threshold:
+                ctx['iteration'] =0
+
             if ctx['cnt'] > count_threshold:
                 ctx['last_call'] = pyb.millis()
                 ctx['cnt'] = 0
         else:
+            ctx['pflopbit'] = ctx['flopbit']
+            ctx['flopbit'] = 0
             if ffunc is not None:
                 try:
-                    ffunc()
+                    ffunc(ctx)
                 except KeyboardInterrupt as e:
                     raise e
                 except BaseException as e:
@@ -137,12 +156,15 @@ class MPSP:
     _last_hb = 0
     _oled_enabled = True
     _mavlink = None
+    _dome_led_pin = None
 
     def __init__(self, mode):
         self._mode = mode
 
     def init(self):
         print('FlightM Mode = {}'.format(self._mode==FLIGHT))
+
+        evts = []
         if self._mode == FLIGHT:
             self._mavlink = MAVLink()
 
@@ -151,14 +173,13 @@ class MPSP:
         except OSError:
             pass
 
-        evts = []
         names = []
         with open('mpsp/config.json', 'r') as rfile:
             obj = json.loads(rfile.read())
             print(obj)
             self._period = obj['loop_period']
             self._oled_enabled = obj['oled_enabled']
-
+            self._dome_led_pin = obj.get('dome_led_pin','X2')
             eid = 2
             for di in obj.get('devices'):
                 if di.get('enabled'):
@@ -181,33 +202,43 @@ class MPSP:
     def _dome_cb(self, timer):
         global DOME_CNT
         try:
-            v = self._pattern[DOME_CNT]
+            v = self._dome_pattern[DOME_CNT]
         except IndexError:
             DOME_CNT = 0
-            v = self._pattern[0]
+            v = self._dome_pattern[0]
 
         DOME_CNT+=1
-
         if v:
             self._dome_led.high()
         else:
             self._dome_led.low()
 
-    def run(self):
+        global TAIL_CNT
+        global CURRENT_HASH
+        try:
+            v = self._tail_pattern[TAIL_CNT]
+        except IndexError:
+            TAIL_CNT = 0
+            v = self._tail_pattern[0]
 
+        TAIL_CNT += 1
+        if v[1]!=CURRENT_HASH:
+            CURRENT_HASH = v[1]
+            self._spi1.write(v[0])
+
+    def run(self):
+        print('run')
         heartbeat_timeout = 5000
 
         status_tim = pyb.Timer(STATUS_TIMER, freq=1)
-        self._dome_timer = pyb.Timer(DOME_LED_TIMER, freq=10)
-        self._dome_led = pyb.Pin(DOME_LED_PIN, pyb.Pin.OUT_PP)
-        self._dome_timer.callback(self._dome_cb)
-        self._pattern = DOME_GROUND_PATTERN
 
-        if self._mode == FLIGHT:
-            if not self._mavlink.wait_heartbeat():
-                 self._mavlink_warning()
-                 self._cancel(status_tim)
-                 return
+        self._tail_pattern = TAIL_GROUND_PATTERN
+        self._spi1 = pyb.SPI(1, pyb.SPI.MASTER, phase=1)
+
+        self._dome_pattern = DOME_GROUND_PATTERN
+        self._led_timer = pyb.Timer(LED_TIMER, freq=5)
+        self._dome_led = pyb.Pin(self._dome_led_pin, pyb.Pin.OUT_PP)
+        self._led_timer.callback(self._dome_cb)
         
         status_led = pyb.LED(STATUS_LED)
         def status_cb(t):
@@ -215,9 +246,19 @@ class MPSP:
             
         status_tim.callback(status_cb)
 
+        if self._mode == FLIGHT:
+            if not self._mavlink.wait_heartbeat():
+                 self._mavlink_warning()
+                 self._cancel(status_tim)
+                 return
+
         switch = pyb.Switch()
         hbwtim = None
         ctx={}
+        cnt = 0
+        evts = self._events
+
+
         st = pyb.millis()
         while 1:
             try:
@@ -248,15 +289,27 @@ class MPSP:
                                 #print('GPS', msg[1])
                                 ctx['gps'] = msg[1]
                                 if abs(msg[1][4]-msg[1][3])>1000: # 1 meter
-                                    self._pattern = DOME_FLIGHT_PATTERN
+                                    self._dome_pattern = DOME_FLIGHT_PATTERN
+                                    self._tail_pattern = TAIL_FLIGHT_PATTERN
                                 else:
-                                    self._pattern = DOME_GROUND_PATTERN
+                                    self._dome_pattern = DOME_GROUND_PATTERN
+                                    self._tail_pattern = TAIL_GROUND_PATTERN
+
                             elif mid == ATTITUDE:
                                 ctx['attitude'] = msg[1]
 
-                for i, evt in enumerate(self._events):
-                     evt(ctx)
-                pyb.delay(5)
+                # for evt in evts:
+                #     evt(ctx)
+                if self._events:
+                    try:
+                        evt = evts[cnt]
+                    except IndexError:
+                        evt = evts[0]
+                        cnt = 0
+
+                    cnt+=1
+                    evt(ctx)
+
             except KeyboardInterrupt:
                 self._cancel(status_tim)
                 break
@@ -293,7 +346,7 @@ class MPSP:
     def _cancel(self, tim):
         tim.callback(None)
         pyb.LED(WARNING_LED).off()
-        self._dome_timer.callback(None)
+        self._led_timer.callback(None)
 
     def _create_device_event(self, dev, eid):
         klass = dev['klass']
