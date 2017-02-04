@@ -15,16 +15,17 @@
 # ===============================================================================
 
 import json
-import pyb
 import os
-import io
+
+import pyb
 
 from mavlink import GLOBAL_POSITION_INT, HEARTBEAT, ATTITUDE
 from mavlink.mavlink import MAVLink
 from mpsp import FLIGHT
-from mpsp.drivers.tail_leds import generate_tail_flight_pattern, generate_tail_ground_pattern
+from mpsp.events import ads1115_event, ds18x20_event, dht_event, OPEN_FILES
+from mpsp.led_patterns import TAIL_FLIGHT_PATTERN,TAIL_LANDING_PATTERN,TAIL_GROUND_PATTERN, TAIL_CLEAR, \
+    DOME_FLIGHT_PATTERN, DOME_GROUND_PATTERN, STATUS_PATTERN
 
-DATA_ROOT = '/sd/mpsp_data'
 
 # RESERVED TIMERS 2,3,5,6
 STATUS_TIMER = const( 1)
@@ -33,120 +34,6 @@ LED_TIMER = const(8)
 STATUS_LED = const( 2)
 
 WARNING_LED = const( 1)
-TFUNC_LED = const( 3)
-
-OPEN_FILES = []
-
-DOME_GROUND_PATTERN = (1, 0, 1, 0, 0, 0)
-DOME_FLIGHT_PATTERN = (0,0,0,0,0,1,1)
-DOME_CNT = 0
-
-TAIL_CNT = 0
-TAIL_FLIGHT_PATTERN = generate_tail_flight_pattern()
-TAIL_GROUND_PATTERN = generate_tail_ground_pattern()
-CURRENT_HASH = None
-
-def ads1115_event(dev, eid, period, display):
-    return csv_datalogger_wrapper(dev, 'ads115', 'A', 'A0,A1,A2,A3', eid,period,  verbose=display)
-
-
-def ds18x20_event(dev, eid, period, display):
-    return csv_datalogger_wrapper(dev, 'ds18x20', 'ds18x20', 'TempC', eid,period, verbose=display)
-
-
-def dht_event(dev, eid, period, display):
-    return csv_datalogger_wrapper(dev, 'dht', 'dht', 'Humidity%,TempC', eid, period, verbose=display)
-
-
-def csv_datalogger_wrapper(dev, rootname, name, header, msg_idx, period, verbose=False):
-    root = '{}/{}'.format(DATA_ROOT, rootname)
-    try:
-        os.mkdir(root)
-    except OSError:
-        pass
-
-    cnt = 1
-    for f in os.listdir(root):
-        if not f.endswith('.csv'):
-            continue
-
-        h, _ = f.split('.')
-        cnt = max(cnt, int(h) + 1)
-
-    p = '{}/{:06n}.csv'.format(root, cnt)
-    wfile = io.open(p, 'w')
-    header = 'GPS_BOOT_TIME, LAT, LON, ALT, REL_ALT,{}\n'.format(header)
-    wfile.write(header)
-
-    OPEN_FILES.append(wfile)
-    st = pyb.millis()
-    def tfunc(ctx):
-        m = dev.get_measurement()
-        print((pyb.millis()-st)/1000, dev, m)
-        if verbose:
-            try:
-                from display import DISPLAY
-                #print('{}={}'.format(dev, m))
-                if isinstance(m, (list, tuple)):
-                    for i,mi in enumerate(m):
-                        DISPLAY.message('{}{}:{}'.format(name,i, mi), msg_idx+i)
-                else:
-                    DISPLAY.message('{}:{}'.format(name, m), msg_idx)
-            except OSError:
-                pass
-
-        if m is not None:
-            try:
-                # with open(p, 'a') as afile:
-                gps = ctx.get('gps', (None,None,None,None,None))
-                gps = ','.join(map(str, gps))
-                if isinstance(m, (list, tuple)):
-                    m = ','.join(map(str, m))
-                wfile.write('{},{}\n'.format(gps, m))
-                if not ctx['iteration']%5:
-                    print('flushing file')
-                    wfile.flush()
-            except KeyboardInterrupt:
-                # never allow Ctrl+C when writing to disk
-                pass
-    return event_wrapper(tfunc, None, period)
-
-
-def event_wrapper(tfunc, ffunc, period, count_threshold=0, iteration_threshold=100):
-    ctx = {'last_call': pyb.millis(), 'cnt': 0, 'iteration': 0, 'flopbit':0, 'pflopbit': 0}
-    def func(mctx):
-        if pyb.millis() - ctx['last_call'] > period:
-            ctx['pflopbit'] = ctx['flopbit']
-            ctx['flopbit'] = 1
-            if tfunc is not None:
-                mctx['iteration']= ctx['iteration']
-                try:
-                    tfunc(mctx)
-                except KeyboardInterrupt as e:
-                    raise e
-                except BaseException as e:
-                    pyb.LED(TFUNC_LED).on()
-                    print('tfunc exception={}'.format(e))
-            ctx['cnt'] += 1
-            ctx['iteration'] +=1
-            if ctx['iteration'] >= iteration_threshold:
-                ctx['iteration'] =0
-
-            if ctx['cnt'] > count_threshold:
-                ctx['last_call'] = pyb.millis()
-                ctx['cnt'] = 0
-        else:
-            ctx['pflopbit'] = ctx['flopbit']
-            ctx['flopbit'] = 0
-            if ffunc is not None:
-                try:
-                    ffunc(ctx)
-                except KeyboardInterrupt as e:
-                    raise e
-                except BaseException as e:
-                    print('ffunc exception={}'.format(e))
-
-    return func
 
 
 class MPSP:
@@ -157,9 +44,14 @@ class MPSP:
     _oled_enabled = True
     _mavlink = None
     _dome_led_pin = None
+    _status_cnt =  0
+    _dome_cnt = 0
+    _tail_cnt = 0
+    _current_hash = None
 
     def __init__(self, mode):
         self._mode = mode
+        self._status_pattern = STATUS_PATTERN
 
     def init(self):
         print('FlightM Mode = {}'.format(self._mode==FLIGHT))
@@ -194,62 +86,30 @@ class MPSP:
         if self._oled_enabled:
             from display import DISPLAY
             mode = 'F' if self._mode ==FLIGHT else 'G'
-            DISPLAY.header('MPSP v0.1  {}'.format(mode), '  ')
+            DISPLAY.header('MPSP v0.2  {}'.format(mode), '  ')
 
         self._events = evts
         pyb.delay(100)
-
-    def _dome_cb(self, timer):
-        global DOME_CNT
-        try:
-            v = self._dome_pattern[DOME_CNT]
-        except IndexError:
-            DOME_CNT = 0
-            v = self._dome_pattern[0]
-
-        DOME_CNT+=1
-        if v:
-            self._dome_led.high()
-        else:
-            self._dome_led.low()
-
-        global TAIL_CNT
-        global CURRENT_HASH
-        try:
-            v = self._tail_pattern[TAIL_CNT]
-        except IndexError:
-            TAIL_CNT = 0
-            v = self._tail_pattern[0]
-
-        TAIL_CNT += 1
-        if v[1]!=CURRENT_HASH:
-            CURRENT_HASH = v[1]
-            self._spi1.write(v[0])
 
     def run(self):
         print('run')
         heartbeat_timeout = 5000
 
-        status_tim = pyb.Timer(STATUS_TIMER, freq=1)
+        #status_tim = pyb.Timer(STATUS_TIMER, freq=1)
+        self._status_led = pyb.LED(STATUS_LED)
+        self._dome_led = pyb.Pin(self._dome_led_pin, pyb.Pin.OUT_PP)
 
         self._tail_pattern = TAIL_GROUND_PATTERN
         self._spi1 = pyb.SPI(1, pyb.SPI.MASTER, phase=1)
 
         self._dome_pattern = DOME_GROUND_PATTERN
-        self._led_timer = pyb.Timer(LED_TIMER, freq=5)
-        self._dome_led = pyb.Pin(self._dome_led_pin, pyb.Pin.OUT_PP)
-        self._led_timer.callback(self._dome_cb)
-        
-        status_led = pyb.LED(STATUS_LED)
-        def status_cb(t):
-            status_led.toggle()
-            
-        status_tim.callback(status_cb)
+        self._led_timer = pyb.Timer(LED_TIMER, freq=8)
+        self._led_timer.callback(self._led_cb)
 
         if self._mode == FLIGHT:
             if not self._mavlink.wait_heartbeat():
                  self._mavlink_warning()
-                 self._cancel(status_tim)
+                 self._cancel()
                  return
 
         switch = pyb.Switch()
@@ -258,8 +118,6 @@ class MPSP:
         cnt = 0
         evts = self._events
 
-
-        st = pyb.millis()
         while 1:
             try:
                 now = pyb.millis()
@@ -269,9 +127,7 @@ class MPSP:
                         if hbwtim is None:
                             hbwtim = pyb.Timer(HEARTBEAT_TIMER, freq=10)
                             hbwtim.callback(lambda t: pyb.LED(WARNING_LED).toggle())
-                            status_tim.callback(None)
                     elif hbwtim:
-                        status_tim.callback(status_cb)
                         pyb.LED(WARNING_LED).off()
                         hbwtim.callback(None)
                         hbwtim = None
@@ -279,18 +135,18 @@ class MPSP:
                     msgs = self._mavlink.get_messages()
                     if msgs:
                         for msg in msgs:
-                        # msg = self._mavlink.get_message()
-                        # if msg:
-                            #print('mavlink msg={}'.format(msg))
                             mid = msg[0]
                             if mid == HEARTBEAT:
                                 self._last_hb = pyb.millis()
                             elif mid == GLOBAL_POSITION_INT:
-                                #print('GPS', msg[1])
                                 ctx['gps'] = msg[1]
-                                if abs(msg[1][4]-msg[1][3])>1000: # 1 meter
+                                relalt = abs(msg[1][4]-msg[1][3])
+                                relalt = 501
+                                if relalt >1000: # 1 meter
                                     self._dome_pattern = DOME_FLIGHT_PATTERN
                                     self._tail_pattern = TAIL_FLIGHT_PATTERN
+                                elif relalt>500:
+                                    self._tail_pattern = TAIL_LANDING_PATTERN
                                 else:
                                     self._dome_pattern = DOME_GROUND_PATTERN
                                     self._tail_pattern = TAIL_GROUND_PATTERN
@@ -298,9 +154,7 @@ class MPSP:
                             elif mid == ATTITUDE:
                                 ctx['attitude'] = msg[1]
 
-                # for evt in evts:
-                #     evt(ctx)
-                if self._events:
+                if evts:
                     try:
                         evt = evts[cnt]
                     except IndexError:
@@ -311,19 +165,62 @@ class MPSP:
                     evt(ctx)
 
             except KeyboardInterrupt:
-                self._cancel(status_tim)
+                self._cancel()
                 break
 
-            #except BaseException as e:
-            #    print('run exception', e)
-
             if switch():
-                self._cancel(status_tim)
+                self._cancel()
                 break
 
         if OPEN_FILES:
             for f in OPEN_FILES:
                 f.close()
+
+        self._cleanup()
+
+    def _led_cb(self, timer):
+        # status
+        status_cnt = self._status_cnt
+        try:
+             v = self._status_pattern[status_cnt]
+        except IndexError:
+             status_cnt = 0
+             v = self._status_pattern[0]
+        status_cnt +=1
+        self._status_cnt = status_cnt
+        if v:
+            self._status_led.on()
+        else:
+            self._status_led.off()
+
+        # dome
+        dome_cnt = self._dome_cnt
+        try:
+            v = self._dome_pattern[dome_cnt]
+        except IndexError:
+            dome_cnt = 0
+            v = self._dome_pattern[0]
+
+        dome_cnt+=1
+        self._dome_cnt = dome_cnt
+        if v:
+            self._dome_led.high()
+        else:
+            self._dome_led.low()
+
+        # tail
+        tail_cnt = self._tail_cnt
+        try:
+            v = self._tail_pattern[tail_cnt]
+        except IndexError:
+            tail_cnt = 0
+            v = self._tail_pattern[0]
+
+        tail_cnt += 1
+        self._tail_cnt = tail_cnt
+        if v[1]!=self._current_hash:
+            self._current_hash = v[1]
+            self._spi1.write(v[0])
 
     def _mavlink_warning(self):
         led1 = pyb.LED(1)
@@ -343,10 +240,14 @@ class MPSP:
             led4.toggle()
             pyb.delay(250)
 
-    def _cancel(self, tim):
-        tim.callback(None)
+    def _cancel(self):
+        self._cleanup()
+
+    def _cleanup(self):
         pyb.LED(WARNING_LED).off()
         self._led_timer.callback(None)
+        self._spi1.write(TAIL_CLEAR[0])
+        self._dome_led.low()
 
     def _create_device_event(self, dev, eid):
         klass = dev['klass']
@@ -356,7 +257,7 @@ class MPSP:
             def factory():
                 from mpsp.drivers.dht import DHT22
                 d = DHT22(data_pin=dev.get('data_pin', 'Y2'))
-                return dht_event(d, eid, dev.get('period',1000), self._oled_enabled)
+                return dht_event(d, eid, dev.get('period', 1000), self._oled_enabled)
         elif klass == 'DS18X20':
             def factory():
                 from mpsp.drivers.ds18x20 import DS18X20
