@@ -16,24 +16,22 @@
 
 import json
 import os
-
 import pyb
 
 from mavlink import GLOBAL_POSITION_INT, HEARTBEAT, ATTITUDE
 from mavlink.mavlink import MAVLink
 from mpsp import FLIGHT
 from mpsp.events import ads1115_event, ds18x20_event, dht_event, OPEN_FILES
-from mpsp.led_patterns import TAIL_FLIGHT_PATTERN,TAIL_LANDING_PATTERN,TAIL_GROUND_PATTERN, TAIL_CLEAR, \
+from mpsp.led_patterns import TAIL_FLIGHT_PATTERN, TAIL_LANDING_PATTERN, TAIL_GROUND_PATTERN, TAIL_CLEAR, \
     DOME_FLIGHT_PATTERN, DOME_GROUND_PATTERN, STATUS_PATTERN
 
-
 # RESERVED TIMERS 2,3,5,6
-STATUS_TIMER = const( 1)
-HEARTBEAT_TIMER = const( 7)
+STATUS_TIMER = const(1)
+HEARTBEAT_TIMER = const(7)
 LED_TIMER = const(8)
-STATUS_LED = const( 2)
+STATUS_LED = const(2)
 
-WARNING_LED = const( 1)
+WARNING_LED = const(1)
 
 
 class MPSP:
@@ -44,7 +42,7 @@ class MPSP:
     _oled_enabled = True
     _mavlink = None
     _dome_led_pin = None
-    _status_cnt =  0
+    _status_cnt = 0
     _dome_cnt = 0
     _tail_cnt = 0
     _current_hash = None
@@ -54,7 +52,7 @@ class MPSP:
         self._status_pattern = STATUS_PATTERN
 
     def init(self):
-        print('FlightM Mode = {}'.format(self._mode==FLIGHT))
+        print('FlightM Mode = {}'.format(self._mode == FLIGHT))
 
         evts = []
         if self._mode == FLIGHT:
@@ -71,7 +69,7 @@ class MPSP:
             print(obj)
             self._period = obj['loop_period']
             self._oled_enabled = obj['oled_enabled']
-            self._dome_led_pin = obj.get('dome_led_pin','X2')
+            self._dome_led_pin = obj.get('dome_led_pin', 'X2')
             eid = 2
             for di in obj.get('devices'):
                 if di.get('enabled'):
@@ -85,7 +83,7 @@ class MPSP:
 
         if self._oled_enabled:
             from display import DISPLAY
-            mode = 'F' if self._mode ==FLIGHT else 'G'
+            mode = 'F' if self._mode == FLIGHT else 'G'
             DISPLAY.header('MPSP v0.2  {}'.format(mode), '  ')
 
         self._events = evts
@@ -95,7 +93,7 @@ class MPSP:
         print('run')
         heartbeat_timeout = 5000
 
-        #status_tim = pyb.Timer(STATUS_TIMER, freq=1)
+        # status_tim = pyb.Timer(STATUS_TIMER, freq=1)
         self._status_led = pyb.LED(STATUS_LED)
         self._dome_led = pyb.Pin(self._dome_led_pin, pyb.Pin.OUT_PP)
 
@@ -108,13 +106,13 @@ class MPSP:
 
         if self._mode == FLIGHT:
             if not self._mavlink.wait_heartbeat():
-                 self._mavlink_warning()
-                 self._cancel()
-                 return
+                self._mavlink_warning()
+                self._cancel()
+                return
 
         switch = pyb.Switch()
         hbwtim = None
-        ctx={}
+        ctx = {}
         cnt = 0
         evts = self._events
 
@@ -123,7 +121,7 @@ class MPSP:
                 now = pyb.millis()
                 if self._mode == FLIGHT:
                     # check for heartbeat timeout
-                    if now-self._last_hb > heartbeat_timeout:
+                    if now - self._last_hb > heartbeat_timeout:
                         if hbwtim is None:
                             hbwtim = pyb.Timer(HEARTBEAT_TIMER, freq=10)
                             hbwtim.callback(lambda t: pyb.LED(WARNING_LED).toggle())
@@ -140,12 +138,12 @@ class MPSP:
                                 self._last_hb = pyb.millis()
                             elif mid == GLOBAL_POSITION_INT:
                                 ctx['gps'] = msg[1]
-                                relalt = abs(msg[1][4]-msg[1][3])
+                                relalt = abs(msg[1][4] - msg[1][3])
                                 relalt = 501
-                                if relalt >1000: # 1 meter
+                                if relalt > 1000:  # 1 meter
                                     self._dome_pattern = DOME_FLIGHT_PATTERN
                                     self._tail_pattern = TAIL_FLIGHT_PATTERN
-                                elif relalt>500:
+                                elif relalt > 500:
                                     self._tail_pattern = TAIL_LANDING_PATTERN
                                 else:
                                     self._dome_pattern = DOME_GROUND_PATTERN
@@ -161,7 +159,7 @@ class MPSP:
                         evt = evts[0]
                         cnt = 0
 
-                    cnt+=1
+                    cnt += 1
                     evt(ctx)
 
             except KeyboardInterrupt:
@@ -182,11 +180,11 @@ class MPSP:
         # status
         status_cnt = self._status_cnt
         try:
-             v = self._status_pattern[status_cnt]
+            v = self._status_pattern[status_cnt]
         except IndexError:
-             status_cnt = 0
-             v = self._status_pattern[0]
-        status_cnt +=1
+            status_cnt = 0
+            v = self._status_pattern[0]
+        status_cnt += 1
         self._status_cnt = status_cnt
         if v:
             self._status_led.on()
@@ -201,7 +199,7 @@ class MPSP:
             dome_cnt = 0
             v = self._dome_pattern[0]
 
-        dome_cnt+=1
+        dome_cnt += 1
         self._dome_cnt = dome_cnt
         if v:
             self._dome_led.high()
@@ -218,7 +216,7 @@ class MPSP:
 
         tail_cnt += 1
         self._tail_cnt = tail_cnt
-        if v[1]!=self._current_hash:
+        if v[1] != self._current_hash:
             self._current_hash = v[1]
             self._spi1.write(v[0])
 

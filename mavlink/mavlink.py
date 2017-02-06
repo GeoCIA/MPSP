@@ -3,8 +3,13 @@ from pyb import UART, millis, delay
 
 from mavlink import HEARTBEAT, GLOBAL_POSITION_INT, STATUSTEXT, ATTITUDE, AHRS2, AHRS3
 
+
 class Message:
     payload_len = None
+    seq_num = None
+    sys_id = None
+    comp_id = None
+    message_id = None
 
     def __init__(self):
         self._buffer = None
@@ -22,9 +27,9 @@ class Message:
             return
 
         if self._buffer:
-            self._buffer+=buf
+            self._buffer += buf
         else:
-            if buf[0]==0xFE:
+            if buf[0] == 0xFE:
                 self._buffer = buf
 
         return self.complete()
@@ -39,8 +44,8 @@ class Message:
             self.message_id = b[5]
         except (IndexError, TypeError):
             return
-        nb = len(b)-8
-        return nb>=self.payload_len
+        nb = len(b) - 8
+        return nb >= self.payload_len
 
     def payload(self):
         mid = self.message_id
@@ -54,7 +59,7 @@ class Message:
             severity = struct.unpack('B', buf)[0]
             payload = (severity, buf[1:])
         elif mid == ATTITUDE:
-            payload = struct.unpack('Iffffff',buf)
+            payload = struct.unpack('Iffffff', buf)
         elif mid == AHRS2:
             payload = struct.unpack('IIffff', buf)
         elif mid == AHRS3:
@@ -64,11 +69,12 @@ class Message:
 
     def extra(self):
 
-        e = self._buffer[self.payload_len+8:]
+        e = self._buffer[self.payload_len + 8:]
         if e:
             msg = Message()
             msg.update(e)
             return msg
+
 
 class MAVLink:
     def __init__(self, uartID=6, baudrate=115200):
@@ -124,4 +130,5 @@ class MAVLink:
                     if msg.complete():
                         payloads.append(msg.payload())
                 return payloads
+
 # ============= EOF =============================================
