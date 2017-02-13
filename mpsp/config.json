@@ -2,6 +2,7 @@
   "loop_period": 250,
   "oled_enabled": true,
   "dome_led_pin": "X2",
+  "event_delay": 30,
   "devices": [
     {
       "klass": "DHT22",

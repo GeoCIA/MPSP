@@ -16,8 +16,8 @@
 
 import json
 import os
-import pyb
 
+from pyb import millis, LED, Pin, delay, SPI, Timer, Switch, I2C
 from mavlink import GLOBAL_POSITION_INT, HEARTBEAT, ATTITUDE
 from mavlink.mavlink import MAVLink
 from mpsp import FLIGHT
@@ -46,6 +46,7 @@ class MPSP:
     _dome_cnt = 0
     _tail_cnt = 0
     _current_hash = None
+    _event_delay = 0
 
     def __init__(self, mode):
         self._mode = mode
@@ -69,7 +70,8 @@ class MPSP:
             print(obj)
             self._period = obj['loop_period']
             self._oled_enabled = obj['oled_enabled']
-            self._dome_led_pin = obj.get('dome_led_pin', 'X2')
+            self._dome_led_pin = obj.get('dome_led_pin','X2')
+            self._event_delay = obj.get('event_delay', 30)
             eid = 2
             for di in obj.get('devices'):
                 if di.get('enabled'):
@@ -87,22 +89,22 @@ class MPSP:
             DISPLAY.header('MPSP v0.2  {}'.format(mode), '  ')
 
         self._events = evts
-        pyb.delay(100)
+        delay(100)
+
+        self._status_led = LED(STATUS_LED)
+        self._dome_led = Pin(self._dome_led_pin, Pin.OUT_PP)
+
+        self._tail_pattern = TAIL_GROUND_PATTERN
+        self._spi1 = SPI(1, SPI.MASTER, phase=1)
+
+        self._dome_pattern = DOME_GROUND_PATTERN
+        self._led_timer = Timer(LED_TIMER, freq=8)
+        self._led_timer.callback(self._led_cb)
 
     def run(self):
         print('run')
         heartbeat_timeout = 5000
 
-        # status_tim = pyb.Timer(STATUS_TIMER, freq=1)
-        self._status_led = pyb.LED(STATUS_LED)
-        self._dome_led = pyb.Pin(self._dome_led_pin, pyb.Pin.OUT_PP)
-
-        self._tail_pattern = TAIL_GROUND_PATTERN
-        self._spi1 = pyb.SPI(1, pyb.SPI.MASTER, phase=1)
-
-        self._dome_pattern = DOME_GROUND_PATTERN
-        self._led_timer = pyb.Timer(LED_TIMER, freq=8)
-        self._led_timer.callback(self._led_cb)
 
         if self._mode == FLIGHT:
             if not self._mavlink.wait_heartbeat():
@@ -110,23 +112,29 @@ class MPSP:
                 self._cancel()
                 return
 
-        switch = pyb.Switch()
+        switch = Switch()
         hbwtim = None
         ctx = {}
         cnt = 0
         evts = self._events
 
+        self._warning_led = LED(WARNING_LED)
+        wl = self._warning_led
+        
+        st = millis()
+        evt_delay = self._event_delay
+
         while 1:
             try:
-                now = pyb.millis()
+                now = millis()
                 if self._mode == FLIGHT:
                     # check for heartbeat timeout
                     if now - self._last_hb > heartbeat_timeout:
                         if hbwtim is None:
-                            hbwtim = pyb.Timer(HEARTBEAT_TIMER, freq=10)
-                            hbwtim.callback(lambda t: pyb.LED(WARNING_LED).toggle())
+                            hbwtim = Timer(HEARTBEAT_TIMER, freq=10)
+                            hbwtim.callback(lambda t: wl.toggle())
                     elif hbwtim:
-                        pyb.LED(WARNING_LED).off()
+                        wl.off()
                         hbwtim.callback(None)
                         hbwtim = None
 
@@ -135,12 +143,11 @@ class MPSP:
                         for msg in msgs:
                             mid = msg[0]
                             if mid == HEARTBEAT:
-                                self._last_hb = pyb.millis()
+                                self._last_hb = millis()
                             elif mid == GLOBAL_POSITION_INT:
                                 ctx['gps'] = msg[1]
-                                relalt = abs(msg[1][4] - msg[1][3])
-                                relalt = 501
-                                if relalt > 1000:  # 1 meter
+                                relalt = abs(msg[1][4]-msg[1][3])
+                                if relalt >1000: # 1 meter
                                     self._dome_pattern = DOME_FLIGHT_PATTERN
                                     self._tail_pattern = TAIL_FLIGHT_PATTERN
                                 elif relalt > 500:
@@ -152,7 +159,12 @@ class MPSP:
                             elif mid == ATTITUDE:
                                 ctx['attitude'] = msg[1]
 
-                if evts:
+                    # wait until have a gps signal before starting to save
+                    if 'gps' not in ctx:
+                        continue
+
+                et = millis() - st
+                if evts and et > evt_delay:
                     try:
                         evt = evts[cnt]
                     except IndexError:
@@ -221,10 +233,10 @@ class MPSP:
             self._spi1.write(v[0])
 
     def _mavlink_warning(self):
-        led1 = pyb.LED(1)
-        led2 = pyb.LED(2)
-        led3 = pyb.LED(3)
-        led4 = pyb.LED(4)
+        led1 = LED(1)
+        led2 = LED(2)
+        led3 = LED(3)
+        led4 = LED(4)
 
         led1.on()
         led2.on()
@@ -236,13 +248,13 @@ class MPSP:
             led2.toggle()
             led3.toggle()
             led4.toggle()
-            pyb.delay(250)
+            delay(250)
 
     def _cancel(self):
         self._cleanup()
 
     def _cleanup(self):
-        pyb.LED(WARNING_LED).off()
+        self._warning_led.off()
         self._led_timer.callback(None)
         self._spi1.write(TAIL_CLEAR[0])
         self._dome_led.low()
@@ -264,7 +276,7 @@ class MPSP:
         elif klass == 'ADS1115':
             def factory():
                 from mpsp.drivers.ads1x15 import ADS1115
-                i2c = pyb.I2C(dev.get('bus', 1), pyb.I2C.MASTER)
+                i2c = I2C(dev.get('bus', 1), I2C.MASTER)
                 d = ADS1115(i2c)
                 return ads1115_event(d, eid, dev.get('period', 250), self._oled_enabled)
 
