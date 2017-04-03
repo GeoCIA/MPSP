@@ -23,7 +23,7 @@ class Line:
 
 class DOC:
     def __init__(self):
-        self._lines = []
+        self._lines = [Line(''), Line('')]
 
     def add_message(self, msg, idx):
         if len(self._lines)-1 >= idx:
@@ -35,9 +35,10 @@ class DOC:
         return self._lines
 
     def header(self, msg, msg2=''):
-        self._lines.insert(0, Line(msg2))
-        self._lines.insert(0, Line(msg))
+        self._lines[0] = Line(msg)
+        self._lines[1] = Line(msg2)
 
+        return self._lines
 
 class OLED:
     def __init__(self, bus=1, width=128, height=64):
@@ -50,7 +51,9 @@ class OLED:
 
     def message(self, msg, idx):
         lines = self._doc.add_message(msg, idx)
+        self.refresh(lines)
 
+    def refresh(self, lines):
         self._scr.fill(0)
         h = 0
         for i, l in enumerate(lines):
@@ -59,8 +62,8 @@ class OLED:
         self._scr.show()
 
     def header(self, msg1, msg2):
-        self._doc.header(msg1, msg2)
-
+        lines = self._doc.header(msg1, msg2)
+        self.refresh(lines)
 
 DISPLAY = OLED()
 # ============= EOF =============================================

@@ -50,6 +50,8 @@ class Tlc59711:
             command += '{:07b}'.format(b)
         for rgb in self.pixels:
             for color in rgb:
+
+
                 command += '{:016b}'.format(color)
         assert len(command) == 224
 

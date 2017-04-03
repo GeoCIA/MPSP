@@ -81,7 +81,7 @@ class DS18X20:
         temps = []
         for rom in self.roms:
             temps.append(self.read_temp(rom))
-        return temps
+        return tuple(temps)
 
     def convert_temp(self, rom0, data):
         """

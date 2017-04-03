@@ -21,7 +21,7 @@
 # ============= EOF =============================================
 import io
 import os
-from pyb import millis
+from pyb import millis, LED
 
 DATA_ROOT = '/sd/mpsp_data'
 
@@ -35,7 +35,7 @@ def ads1115_event(dev, eid, period, display):
 
 
 def ds18x20_event(dev, eid, period, display):
-    return csv_datalogger_wrapper(dev, 'ds18x20', 'ds18x20', 'TempC', eid, period, verbose=display)
+    return csv_datalogger_wrapper(dev, 'ds18x20', 'ds18', 'TempC', eid, period, verbose=display)
 
 
 def dht_event(dev, eid, period, display):
@@ -43,11 +43,18 @@ def dht_event(dev, eid, period, display):
 
 
 def csv_datalogger_wrapper(dev, rootname, name, header, msg_idx, period, verbose=False):
+    try:
+        os.mkdir(DATA_ROOT)
+        print('Created DATA_ROOT')
+    except OSError:
+        print('DATA_ROOT {} exists'.format(DATA_ROOT))
+
     root = '{}/{}'.format(DATA_ROOT, rootname)
     try:
         os.mkdir(root)
+        print('Created Device Root')
     except OSError:
-        pass
+        print('Device data root {} exists'.format(root))
 
     cnt = 1
     for f in os.listdir(root):
@@ -58,17 +65,23 @@ def csv_datalogger_wrapper(dev, rootname, name, header, msg_idx, period, verbose
         cnt = max(cnt, int(h) + 1)
 
     p = '{}/{:06n}.csv'.format(root, cnt)
+
+    # with io.open(p, 'w') as wfile:
+    #     header = 'GPS_BOOT_TIME, LAT, LON, ALT, REL_ALT,{}\n'.format(header)
+    #     wfile.write(header)
+    print('Device data file: {} -- {}'.format(dev, p))
     wfile = io.open(p, 'w')
     header = 'GPS_BOOT_TIME, LAT, LON, ALT, REL_ALT,{}\n'.format(header)
     wfile.write(header)
+    #OPEN_FILES.append(wfile)
+    wfile.close()
 
-    OPEN_FILES.append(wfile)
     st = millis()
 
     def tfunc(ctx):
         m = dev.get_measurement()
         print((millis() - st) / 1000, dev, m)
-        if verbose and ctx.get('display_enabled', False):
+        if verbose and ctx.get('display_enabled', True):
             try:
                 from display import DISPLAY
                 # print('{}={}'.format(dev, m))
@@ -76,25 +89,34 @@ def csv_datalogger_wrapper(dev, rootname, name, header, msg_idx, period, verbose
                     for i, mi in enumerate(m):
                         DISPLAY.message('{}{}:{}'.format(name, i, mi), msg_idx + i)
                 else:
-                    DISPLAY.message('{}:{}'.format(name, m), msg_idx)
+                    DISPLAY.message('{}:{}'.format(name, m if m is not None else '---'), msg_idx)
             except OSError as e:
                 print('display error {}'.format(e))
 
         if m is not None:
             try:
-                # with open(p, 'a') as afile:
-                gps = ctx.get('gps', (None, None, None, None, None))
-                gps = ','.join(map(str, gps))
-                if isinstance(m, (list, tuple)):
-                    m = ','.join(map(str, m))
-                try:
-                    wfile.write('{},{}\n'.format(gps, m))
-                except OSError as e:
-                    print('write error {}'.format(e))
+                with open(p, 'a') as wfile:
+                    gps = ctx.get('gps', (None, None, None, None, None))
+                    gps = ','.join(map(str, gps))
+                    if isinstance(m, (list, tuple)):
+                        m = ','.join(map(str, m))
+                    d = '{},{}\n'.format(gps, m)
+                    wfile.write(d)
 
-                if not ctx['iteration'] % 5:
-                    print('flushing file')
-                    wfile.flush()
+                # # with open(p, 'a') as afile:
+                # gps = ctx.get('gps', (None, None, None, None, None))
+                # gps = ','.join(map(str, gps))
+                # if isinstance(m, (list, tuple)):
+                #     m = ','.join(map(str, m))
+                # try:
+                #     ctx['wfile'].write('{},{}\n'.format(gps, m))
+                # except OSError as e:
+                #     ctx['wfile'].close()
+                #     print('write error {}'.format(e))
+                #     ctx['wfile'] = io.open(p, 'a')
+                #
+                # if not ctx['iteration'] % 3:
+                #     wfile.flush()
             except KeyboardInterrupt:
                 # never allow Ctrl+C when writing to disk
                 pass
@@ -108,7 +130,7 @@ def event_wrapper(tfunc, ffunc, period, count_threshold=0, iteration_threshold=1
     def func(mctx):
 
         # permanently disable display
-        if ctx['iteration'] == 50:
+        if ctx['iteration'] >= 50:
             ctx['display_enabled'] = False
 
         if millis() - ctx['last_call'] > period:
@@ -121,8 +143,8 @@ def event_wrapper(tfunc, ffunc, period, count_threshold=0, iteration_threshold=1
                 except KeyboardInterrupt as e:
                     raise e
                 except BaseException as e:
-                    pyb.LED(TFUNC_LED).on()
-                    print('tfunc exception={}'.format(e))
+                    LED(TFUNC_LED).on()
+                    print('tfunc exception={}, mctx={}'.format(e, mctx))
             ctx['cnt'] += 1
             ctx['iteration'] += 1
             if ctx['iteration'] >= iteration_threshold:

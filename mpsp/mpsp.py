@@ -42,7 +42,7 @@ class MPSP:
     _oled_enabled = True
     _mavlink = None
     _dome_led_pin = None
-    _status_cnt = 0
+    # _status_cnt = 0
     _dome_cnt = 0
     _tail_cnt = 0
     _current_hash = None
@@ -51,6 +51,19 @@ class MPSP:
     def __init__(self, mode):
         self._mode = mode
         self._status_pattern = STATUS_PATTERN
+
+    def _make_header(self, status_flag=False, heartbeat_flag=False):
+        mode = 'F' if self._mode == FLIGHT else 'G'
+        h1 = 'MPSP v0.3  {}'.format(mode)
+        flags=''
+        if status_flag:
+            flags='S'
+        if heartbeat_flag:
+            flags+='H'
+
+        h11 = '{:<5s}'.format(flags)
+        h1 = '{}{}'.format(h1,h11)
+        return h1, ''
 
     def init(self):
         print('FlightM Mode = {}'.format(self._mode == FLIGHT))
@@ -85,13 +98,13 @@ class MPSP:
 
         if self._oled_enabled:
             from display import DISPLAY
-            mode = 'F' if self._mode == FLIGHT else 'G'
-            DISPLAY.header('MPSP v0.2  {}'.format(mode), '  ')
+
+            DISPLAY.header(*self._make_header())
 
         self._events = evts
         delay(100)
 
-        self._status_led = LED(STATUS_LED)
+        # self._status_led = LED(STATUS_LED)
         self._dome_led = Pin(self._dome_led_pin, Pin.OUT_PP)
 
         self._tail_pattern = TAIL_GROUND_PATTERN
@@ -105,11 +118,18 @@ class MPSP:
         print('run')
         heartbeat_timeout = 5000
 
+        self._warning_led = LED(WARNING_LED)
+        wl = self._warning_led
 
         if self._mode == FLIGHT:
             if not self._mavlink.wait_heartbeat():
                 self._mavlink_warning()
                 self._cancel()
+                if self._oled_enabled:
+                    from DISPLAY import DISPLAY
+                    DISPLAY.message('Fail', 1)
+                    DISPLAY.message('-- Flight Comms',2)
+
                 return
 
         switch = Switch()
@@ -118,22 +138,38 @@ class MPSP:
         cnt = 0
         evts = self._events
 
-        self._warning_led = LED(WARNING_LED)
-        wl = self._warning_led
-        
         st = millis()
         evt_delay = self._event_delay
 
+        sflag = False
+        hflag = False
+        lt=None
+        heartbeat=False
+        hd=250
         while 1:
+            if self._oled_enabled:
+                et = hd+1
+                if lt:
+                    et = millis() - lt
+                if et > hd:
+                    lt = millis()
+                    from display import DISPLAY
+                    DISPLAY.header(*self._make_header(sflag, hflag))
+                    sflag = not sflag
+                    if heartbeat:
+                        hflag = not hflag
+
             try:
                 now = millis()
                 if self._mode == FLIGHT:
                     # check for heartbeat timeout
                     if now - self._last_hb > heartbeat_timeout:
+                        heartbeat = True
                         if hbwtim is None:
                             hbwtim = Timer(HEARTBEAT_TIMER, freq=10)
                             hbwtim.callback(lambda t: wl.toggle())
                     elif hbwtim:
+                        heartbeat = False
                         wl.off()
                         hbwtim.callback(None)
                         hbwtim = None
@@ -190,18 +226,18 @@ class MPSP:
 
     def _led_cb(self, timer):
         # status
-        status_cnt = self._status_cnt
-        try:
-            v = self._status_pattern[status_cnt]
-        except IndexError:
-            status_cnt = 0
-            v = self._status_pattern[0]
-        status_cnt += 1
-        self._status_cnt = status_cnt
-        if v:
-            self._status_led.on()
-        else:
-            self._status_led.off()
+        # status_cnt = self._status_cnt
+        # try:
+        #     v = self._status_pattern[status_cnt]
+        # except IndexError:
+        #     status_cnt = 0
+        #     v = self._status_pattern[0]
+        # status_cnt += 1
+        # self._status_cnt = status_cnt
+        # if v:
+        #     self._status_led.on()
+        # else:
+        #     self._status_led.off()
 
         # dome
         dome_cnt = self._dome_cnt
